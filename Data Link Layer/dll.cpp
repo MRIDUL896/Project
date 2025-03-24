@@ -13,18 +13,27 @@ struct Frame{
 class Hub {
     static int hNo;
     int id;
+    int maxPorts;
+    int ports;
     vector<Device*> devices;
     Switch* swi;
     public : 
-    Hub(){
+    Hub(int n){
         this->id = hNo++;
         this->devices = {};
+        this->ports = 0;
+        this->maxPorts = n;
         cout<<"Hub "<<id<<" created\n";
     }
     int getId(){
         return this->id;
     }
     void connectSwitch(Switch* swi){
+        if(this->ports > this->maxPorts){
+            cout<<"Maximum port limit reached in hub\n";
+            return;
+        }
+        this->ports += 1;
         cout<<"Hub "<<this->id<<" connected to switch \n";
         this->swi = swi;
     }
@@ -64,21 +73,21 @@ class Device {
         cout<<"sending message from device "<<this->id<<" to hub "<<this->hub->getId()<<endl;
         this->hub->broadCastData(this,reciever,data,true);
     }
-    void receiveMessage(Device* sender,Device* reciever,string data){
+    bool receiveMessage(Device* sender,Device* reciever,string data){
         if(reciever->getId() != this->id){
             cout<<"Device "<<this->id<<" rejected message \n";
-            return;
+            return false;
         }
         cout<<"Device "<<this->id<<" recieved message : "<<data<<endl;
-        cout<<"Sending ack from device "<<this->id<<" to device "<<sender->getId()<<endl;
-        this->sendAck(reciever,sender);
+        return true;
     }
-    void receiveAck(Device* sender,Device* reciever,string data){
+    bool receiveAck(Device* sender,Device* reciever,string data){
         if(reciever->getId() != this->id){
             cout<<"Device "<<this->id<<" rejected ack \n";
-            return;
+            return false;
         }
         cout<<"Device "<<this->id<<" recieved ack : "<<data<<endl;
+        return true;
     }
     void sendAck(Device* sender,Device* reciever){
         this->hub->broadCastAck(sender,reciever,"Ack",true);
@@ -87,6 +96,11 @@ class Device {
 int Device :: devNo = 0;
 
 void Hub:: addDevice(Device* device){
+    if(this->ports > this->maxPorts){
+        cout<<"Maximum port limit reached in hub\n";
+        return;
+    }
+    this->ports += 1;
     cout<<"Hub "<<this->id<<" connected to "<<" device "<<device->getId()<<endl;
     this->devices.push_back(device);
 }
@@ -122,7 +136,7 @@ public:
     }
 
     void addHub(Hub* hub){
-        if(ports == maxPorts){
+        if(ports > maxPorts){
             cout<<"cannot add more ports"<<endl;
             return;
         }
@@ -164,26 +178,30 @@ public:
 
 void Hub::broadCastData(Device* sender,Device* receiver, string data,bool toSw){
     cout<<"Hub "<<this->id<<" is broadcasting \n";
+    Device* foundReciever = NULL;
     for(int i = 0; i < devices.size(); i++){
-        if(devices[i] != sender){
-            devices[i]->receiveMessage(sender,receiver, data);
+        if(devices[i] != sender && devices[i]->receiveMessage(sender,receiver, data)){
+            foundReciever = devices[i];
         }
-        if(devices[i] == receiver) return;
     }
-    if(this->swi && toSw){
+    if(foundReciever){
+        cout<<"Sending ack from device "<<foundReciever->getId()<<" to device "<<sender->getId()<<endl;
+        foundReciever->sendAck(foundReciever,sender);
+    }
+    if(!foundReciever && this->swi && toSw){
         swi->forwardFrameToHub(sender,receiver,data,false);
     }
 }
 
 void Hub::broadCastAck(Device* sender, Device* receiver, string data,bool toSw){
     cout<<"Hub "<<this->id<<" is broadcasting \n";
+    Device* foundReciever = NULL;
     for(int i = 0; i < devices.size(); i++){
-        if(devices[i] != sender){
-            devices[i]->receiveAck(sender,receiver, data);
+        if(devices[i] != sender && devices[i]->receiveAck(sender,receiver, data)){
+            foundReciever = devices[i];
         }
-        if(devices[i] == receiver) return;
     }
-    if(this->swi && toSw){
+    if(!foundReciever && this->swi && toSw){
         swi->forwardFrameToHub(sender,receiver,data,true);
     }
 }
@@ -216,8 +234,8 @@ bool csma_cd(){
     cout<<"Detecting transmission medium..."<<endl;
     while(k <= 15){
         int transmissionChance = rand() % 100;
-        if(transmissionChance < 30){
-            cout<<"CSMA/CD: Successful transmission.\n";
+        if(transmissionChance > 60){
+            cout<<"CSMA/CD: Successfullly accessed meduim.\n";
             return true;
         }else{
             cout<<"CSMA/CD: Collision detected! Retrying... k = "<<++k<<endl;
@@ -232,31 +250,32 @@ bool csma_cd(){
 void goBackN(vector<Frame>& frames, int windowSize) {
     int i = 0;
     while(i < frames.size()){
-        srand(time(0));
-        int framesToSend = min(windowSize, (int)frames.size() - i);
-        cout<<"Sliding Window: Sending "<< framesToSend<<" frames...\n";
-        int j = i;
-        while(j < i + framesToSend){
-            int errorChance = rand() % 100;
-            if(errorChance < 50){
-                cout<<"Frame "<<j<<" Sent: "<<frames[j].data<<endl;
-                // addRedundantBit(frames[j]);
-                if(parityCheck(frames[j])){
-                    cout<<"No error detected\n";
+        if(csma_cd()){
+            int framesToSend = min(windowSize, (int)frames.size() - i);
+            cout<<"Sliding Window: Sending "<< framesToSend<<" frames...\n";
+            int j = i;
+            while(j < i + framesToSend){
+                int errorChance = rand() % 100;
+                if(errorChance > 40){
+                    cout<<"Frame "<<j<<" Sent: "<<frames[j].data<<endl;
+                    // addRedundantBit(frames[j]);
+                    if(parityCheck(frames[j])){
+                        cout<<"No error detected\n";
+                    }else{
+                        cout<<"Error detected retransmitting...\n";
+                        cout<<"Sliding Window: Resending "<<framesToSend<<" frames...\n";
+                        j = i;
+                        continue;
+                    }
+                    j++;
                 }else{
                     cout<<"Error detected retransmitting...\n";
                     cout<<"Sliding Window: Resending "<<framesToSend<<" frames...\n";
                     j = i;
                     continue;
                 }
-                j++;
-            }else{
-                cout<<"Error detected retransmitting...\n";
-                cout<<"Sliding Window: Resending "<<framesToSend<<" frames...\n";
-                j = i;
-                continue;
             }
-        }
+        }else return;
         i += windowSize;
     }
 }
@@ -280,17 +299,15 @@ void testCase3() {
     for(int i=0;i<8;i++){
         frames.push_back({sender,receiever,"11011"});
     }
-    if(csma_cd()){
-        goBackN(frames, 3);
-    }
+    goBackN(frames, 3);
 }
 
 void testCase4() {
     int collision_domains = 0;
-    Switch* networkSwitch = new Switch(2);
-    Hub* hub1 = new Hub();
-    Hub* hub2 = new Hub();
-    // Hub* hub3 = new Hub();
+    Switch* networkSwitch = new Switch(3);
+    Hub* hub1 = new Hub(5);
+    Hub* hub2 = new Hub(5);
+    // Hub* hub3 = new Hub(5);
     networkSwitch->addHub(hub1);
     collision_domains++;
     networkSwitch->addHub(hub2);
@@ -314,22 +331,20 @@ void testCase4() {
         hub2->addDevice(dev);
         networkSwitch->learnPortToMac(dev,1);
     }
+    // for(int i=0;i<5;i++){
+    //     Device* dev = new Device();
+    //     devices.push_back(dev);
+    //     dev->setHub(hub3);
+    //     hub3->addDevice(dev);
+    //     networkSwitch->learnPortToMac(dev,2);
+    // }
     cout<<"Collision domains = "<<collision_domains<<" and Broadcast domains will be 1 always in upto DLL\n";
-    // Device* dev1 = new Device();
-    // devices.push_back(dev1);
-    // dev1->setHub(hub3);
-    // hub3->addDevice(dev1);
-    // networkSwitch->learnPortToMac(dev1,2);
     //dev1 sends to dev9
-    devices[1]->sendMessage(devices[9],"10110");
-    // Device* dev2 = new Device();
-    // devices.push_back(dev2);
-    // dev2->setSwitch(networkSwitch);
-    // networkSwitch->learnPortToMac(dev2,3);
-    // devices[1]->sendMessage(devices[11],"10110");
+    devices[1]->sendMessage(devices[7],"10110");
 }
 
 int main() {
+    srand(time(0));
     // testCase3();
     testCase4();
 }

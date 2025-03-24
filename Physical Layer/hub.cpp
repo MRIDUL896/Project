@@ -97,7 +97,7 @@ void testCase2() {
         device->setHub(hub1);
     }
     //dev1 sends hello to dev4
-    devices[1]->sendMessage(devices[4],"Hello");
+    devices[1]->sendMessage(devices[4],"10110");
 }
 
 int main() {
