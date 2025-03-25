@@ -2,6 +2,34 @@
 #include<vector>
 using namespace std;
 
+struct Frame{
+    Device* srcMAC;
+    Device* destMAC;
+    string data;
+};
+
+void addRedundantBit(Frame &frame){
+    int count = 0;
+    for(int i=0;i<frame.data.length();i++){
+        char ch = frame.data[i];
+        if(ch == '1') count++;
+    }
+    if(count % 2 == 0){
+        frame.data = frame.data + '0';
+    }else{
+        frame.data = frame.data + '1';
+    }
+}
+
+bool parityCheck(string data){
+    int count = 0;
+    for(int i=0;i<data.length();i++){
+        char ch = data[i];
+        if(ch == '1') count++;
+    }
+    return count % 2 == 0;
+}
+
 class Device {
     static int no;
     int id;

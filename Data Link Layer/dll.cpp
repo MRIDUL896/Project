@@ -43,6 +43,27 @@ class Hub {
 };
 int Hub :: hNo = 0;
 
+void addRedundantBit(Frame &frame){
+    int count = 0;
+    for(int i=0;i<frame.data.length();i++){
+        char ch = frame.data[i];
+        if(ch == '1') count++;
+    }
+    if(count % 2 == 0){
+        frame.data = frame.data + '0';
+    }else{
+        frame.data = frame.data + '1';
+    }
+}
+
+bool parityCheck(string data){
+    int count = 0;
+    for(int i=0;i<data.length();i++){
+        char ch = data[i];
+        if(ch == '1') count++;
+    }
+    return count % 2 == 0;
+}
 class Device {
     static int devNo;
     int id;
@@ -55,6 +76,7 @@ class Device {
         this->macAdd = this;
         this->id = devNo++;
         this->hub = NULL;
+        this->swi = NULL;
         cout<<"Device "<<id<<" created\n";
     }
     int getId(){
@@ -78,15 +100,19 @@ class Device {
             cout<<"Device "<<this->id<<" rejected message \n";
             return false;
         }
-        cout<<"Device "<<this->id<<" recieved message : "<<data<<endl;
-        return true;
+        if(parityCheck(data)){
+            cout<<"Device "<<this->id<<" recieved message : "<<data<<endl;
+            return true;
+        }
+        cout<<"Device "<<this->id<<" recieved message with error : "<<data<<endl;
+        return false;
     }
-    bool receiveAck(Device* sender,Device* reciever,string data){
+    bool receiveAck(Device* sender,Device* reciever){
         if(reciever->getId() != this->id){
             cout<<"Device "<<this->id<<" rejected ack \n";
             return false;
         }
-        cout<<"Device "<<this->id<<" recieved ack : "<<data<<endl;
+        cout<<"Device "<<this->id<<" recieved ack \n";
         return true;
     }
     void sendAck(Device* sender,Device* reciever){
@@ -122,13 +148,8 @@ public:
         cout<<"Switch created\n";
     }
 
-    void learnMAC(Device* mac){
-        if(ports == maxPorts){
-            cout<<"cannot add more ports"<<endl;
-            return;
-        }
-        macTable[mac] = ports;
-        this->ports += 1;
+    void learnMAC(Device* mac,int port){
+        this->macTable[mac] = port;
     }
 
     void learnPortToMac(Device* mac,int port){
@@ -154,24 +175,28 @@ public:
     }
 
     void forwardFrameToHub(Device* sender,Device* reciever,string data,bool isAck){
-        for(pair<int,vector<Device*>> it : portToMac){
-            int port = it.first;
-            vector<Device*> devices = it.second;
-            for(auto device : devices){
-                if(device == reciever){
-                    if(csma_cd()){
-                        cout<<"Forwarding data from switch via port "<<port<<endl;
-                        if(this->hubs[port]){
-                            if(!isAck) this->hubs[port]->broadCastData(sender,reciever,data,false);
-                            else this->hubs[port]->broadCastAck(sender,reciever,data,false);
-                        }else{
-                            cout<<"Device "<<reciever->getId()<<" recieved : "<<data<<endl;
-                            cout<<"forwarding ack via port "<<port<<endl; 
-                            cout<<"Device "<<sender->getId()<<" recieved : ACK\n";
-                        }
-                    }
+        int port = -1;
+        if(macTable.find(reciever) != macTable.end()){
+            port = macTable[reciever];
+        }
+        if(port != -1){
+            if(macTable[sender] == macTable[reciever]){
+                //direct
+                cout<<"Device "<<reciever->getId()<<" recieved : "<<data<<endl; 
+                cout<<"Device "<<sender->getId()<<" recieved : ACK\n";
+            }else if(this->hubs[port] != NULL ){
+                Frame frame = {sender,reciever,data};
+                addRedundantBit(frame);
+                //forward to hub
+                cout<<"port Found "<<port<<endl;
+                if(csma_cd()){
+                    cout<<"Forwarding data from switch via port "<<port<<endl;
+                    if(!isAck) this->hubs[port]->broadCastData(sender,reciever,frame.data,false);
+                    else this->hubs[port]->broadCastAck(sender,reciever,frame.data,false);
                 }
             }
+        }else{
+            cout<<"Device not found in this switch\n";
         }
     }
 };
@@ -197,35 +222,13 @@ void Hub::broadCastAck(Device* sender, Device* receiver, string data,bool toSw){
     cout<<"Hub "<<this->id<<" is broadcasting \n";
     Device* foundReciever = NULL;
     for(int i = 0; i < devices.size(); i++){
-        if(devices[i] != sender && devices[i]->receiveAck(sender,receiver, data)){
+        if(devices[i] != sender && devices[i]->receiveAck(sender,receiver)){
             foundReciever = devices[i];
         }
     }
     if(!foundReciever && this->swi && toSw){
         swi->forwardFrameToHub(sender,receiver,data,true);
     }
-}
-
-void addRedundantBit(Frame &frame){
-    int count = 0;
-    for(int i=0;i<frame.data.length();i++){
-        char ch = frame.data[i];
-        if(ch == '1') count++;
-    }
-    if(count % 2 == 0){
-        frame.data = frame.data + '0';
-    }else{
-        frame.data = frame.data + '1';
-    }
-}
-
-bool parityCheck(Frame frame){
-    int count = 0;
-    for(int i=0;i<frame.data.length();i++){
-        char ch = frame.data[i];
-        if(ch == '1') count++;
-    }
-    return count % 2 == 0;
 }
 
 bool csma_cd(){
@@ -259,7 +262,7 @@ void goBackN(vector<Frame>& frames, int windowSize) {
                 if(errorChance > 40){
                     cout<<"Frame "<<j<<" Sent: "<<frames[j].data<<endl;
                     // addRedundantBit(frames[j]);
-                    if(parityCheck(frames[j])){
+                    if(parityCheck(frames[j].data)){
                         cout<<"No error detected\n";
                     }else{
                         cout<<"Error detected retransmitting...\n";
@@ -288,7 +291,7 @@ void testCase3() {
         Device* dev = new Device();
         dev->setSwitch(networkSwitch);
         devices.push_back(dev);
-        networkSwitch->learnMAC(devices[i]);
+        networkSwitch->learnMAC(devices[i],i);
         networkSwitch->learnPortToMac(devices[i],i);
         collision_domains++;
     }
@@ -297,7 +300,9 @@ void testCase3() {
     Device* receiever = devices[4];
     vector<Frame> frames;
     for(int i=0;i<8;i++){
-        frames.push_back({sender,receiever,"11011"});
+        Frame frame = {sender,receiever,"11010"};
+        addRedundantBit(frame);
+        frames.push_back(frame);
     }
     goBackN(frames, 3);
 }
@@ -307,15 +312,15 @@ void testCase4() {
     Switch* networkSwitch = new Switch(3);
     Hub* hub1 = new Hub(5);
     Hub* hub2 = new Hub(5);
-    // Hub* hub3 = new Hub(5);
+    Hub* hub3 = new Hub(5);
     networkSwitch->addHub(hub1);
     collision_domains++;
     networkSwitch->addHub(hub2);
     collision_domains++;
-    // networkSwitch->addHub(hub3);
+    networkSwitch->addHub(hub3);
     hub1->connectSwitch(networkSwitch);
     hub2->connectSwitch(networkSwitch);
-    // hub3->connectSwitch(networkSwitch);
+    hub3->connectSwitch(networkSwitch);
     vector<Device*> devices;
     for(int i=0;i<5;i++){
         Device* dev = new Device();
@@ -323,6 +328,7 @@ void testCase4() {
         dev->setHub(hub1);
         hub1->addDevice(dev);
         networkSwitch->learnPortToMac(dev,0);
+        networkSwitch->learnMAC(dev,0);
     }
     for(int i=0;i<5;i++){
         Device* dev = new Device();
@@ -330,17 +336,19 @@ void testCase4() {
         dev->setHub(hub2);
         hub2->addDevice(dev);
         networkSwitch->learnPortToMac(dev,1);
+        networkSwitch->learnMAC(dev,1);
     }
-    // for(int i=0;i<5;i++){
-    //     Device* dev = new Device();
-    //     devices.push_back(dev);
-    //     dev->setHub(hub3);
-    //     hub3->addDevice(dev);
-    //     networkSwitch->learnPortToMac(dev,2);
-    // }
+    for(int i=0;i<5;i++){
+        Device* dev = new Device();
+        devices.push_back(dev);
+        dev->setHub(hub3);
+        hub3->addDevice(dev);
+        networkSwitch->learnPortToMac(dev,2);
+        networkSwitch->learnMAC(dev,2);
+    }
     cout<<"Collision domains = "<<collision_domains<<" and Broadcast domains will be 1 always in upto DLL\n";
     //dev1 sends to dev9
-    devices[1]->sendMessage(devices[7],"10110");
+    devices[2]->sendMessage(devices[11],"101110");
 }
 
 int main() {
